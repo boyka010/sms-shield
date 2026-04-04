@@ -19,6 +19,8 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { PageTransition } from "@/components/dashboard/page-transition";
 import {
   Sidebar,
   SidebarContent,
@@ -214,7 +216,11 @@ export default function DashboardLayout({
       <SidebarInset>
         <DashboardHeader />
         <main className="flex-1 overflow-auto p-6 scrollbar-thin">
-          {children}
+          <ErrorBoundary>
+            <PageTransition>
+              {children}
+            </PageTransition>
+          </ErrorBoundary>
         </main>
       </SidebarInset>
     </SidebarProvider>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Plus,
   Settings2,
@@ -9,7 +9,6 @@ import {
   Pencil,
   Copy,
   Trash2,
-  Clock,
   ShoppingCart,
   Package,
   Users,
@@ -18,21 +17,22 @@ import {
   Hourglass,
   GitBranch,
   FileText,
-  GripVertical,
   X,
   Zap,
   Activity,
   AlertCircle,
   CheckCircle2,
+  ChevronRight,
+  RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
   DialogContent,
@@ -40,7 +40,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -61,6 +60,11 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Switch } from '@/components/ui/switch';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 type TriggerType = 'cart_abandoned' | 'order_created' | 'checkout_started' | 'rfm_segment_change' | 'schedule';
 type ActionType = 'send_sms' | 'wait' | 'check_condition' | 'generate_landing_page';
@@ -93,6 +97,10 @@ interface AutomationRule {
   createdAt: string;
 }
 
+// ---------------------------------------------------------------------------
+// Visual config maps
+// ---------------------------------------------------------------------------
+
 const triggerConfig: Record<TriggerType, { label: string; icon: React.ComponentType<{ className?: string }>; color: string; colorBg: string }> = {
   cart_abandoned: { label: 'Cart Abandoned', icon: ShoppingCart, color: 'text-orange-600 dark:text-orange-400', colorBg: 'bg-orange-100 dark:bg-orange-900/30' },
   order_created: { label: 'Order Created', icon: Package, color: 'text-emerald-600 dark:text-emerald-400', colorBg: 'bg-emerald-100 dark:bg-emerald-900/30' },
@@ -108,7 +116,14 @@ const actionConfig: Record<ActionType, { label: string; icon: React.ComponentTyp
   generate_landing_page: { label: 'Generate Landing Page', icon: FileText, color: 'text-violet-600 dark:text-violet-400', colorBg: 'bg-violet-100 dark:bg-violet-900/30' },
 };
 
-const sampleRules: AutomationRule[] = [
+// ---------------------------------------------------------------------------
+// Seeded fallback rules (used when API is not yet available)
+// ---------------------------------------------------------------------------
+
+// TODO: Build a dedicated /api/automation-rules endpoint that queries the AutomationRule table
+//       and remove this fallback data once the endpoint is live.
+
+const fallbackRules: AutomationRule[] = [
   {
     id: '1',
     name: 'Cart Recovery - 3 Touch',
@@ -116,37 +131,11 @@ const sampleRules: AutomationRule[] = [
     triggerType: 'cart_abandoned',
     triggerConfig: { inactivityMinutes: '30' },
     actions: [
-      {
-        id: 'a1',
-        type: 'send_sms',
-        config: {
-          messageTemplate: 'Hey {{customer_name}}, you left items in your cart! Complete your purchase now. {{recovery_link}}',
-        },
-      },
-      {
-        id: 'a2',
-        type: 'wait',
-        config: { delayHours: '4' },
-      },
-      {
-        id: 'a3',
-        type: 'send_sms',
-        config: {
-          messageTemplate: '{{customer_name}}, your cart is waiting! Items sell out fast. Complete your order: {{recovery_link}}',
-        },
-      },
-      {
-        id: 'a4',
-        type: 'wait',
-        config: { delayHours: '20' },
-      },
-      {
-        id: 'a5',
-        type: 'send_sms',
-        config: {
-          messageTemplate: 'Final chance {{customer_name}}! Your cart expires soon. Use code SAVE10 for 10% off: {{recovery_link}}',
-        },
-      },
+      { id: 'a1', type: 'send_sms', config: { messageTemplate: 'Hey {{customer_name}}, you left items in your cart! Complete your purchase now. {{recovery_link}}' } },
+      { id: 'a2', type: 'wait', config: { delayHours: '4' } },
+      { id: 'a3', type: 'send_sms', config: { messageTemplate: '{{customer_name}}, your cart is waiting! Items sell out fast. Complete your order: {{recovery_link}}' } },
+      { id: 'a4', type: 'wait', config: { delayHours: '20' } },
+      { id: 'a5', type: 'send_sms', config: { messageTemplate: 'Final chance {{customer_name}}! Your cart expires soon. Use code SAVE10 for 10% off: {{recovery_link}}' } },
     ],
     isActive: true,
     executionCount: 12450,
@@ -160,13 +149,7 @@ const sampleRules: AutomationRule[] = [
     triggerType: 'order_created',
     triggerConfig: { condition: 'all_orders' },
     actions: [
-      {
-        id: 'a6',
-        type: 'send_sms',
-        config: {
-          messageTemplate: 'Thank you {{customer_name}}! Your order has been received. We\'ll notify you when it ships. {{store_name}}',
-        },
-      },
+      { id: 'a6', type: 'send_sms', config: { messageTemplate: "Thank you {{customer_name}}! Your order has been received. We'll notify you when it ships. {{store_name}}" } },
     ],
     isActive: true,
     executionCount: 31200,
@@ -180,24 +163,9 @@ const sampleRules: AutomationRule[] = [
     triggerType: 'rfm_segment_change',
     triggerConfig: { targetSegment: 'at_risk', waitDays: '7' },
     actions: [
-      {
-        id: 'a7',
-        type: 'wait',
-        config: { delayHours: '168' },
-      },
-      {
-        id: 'a8',
-        type: 'check_condition',
-        config: { conditionField: 'last_order_days', conditionOperator: 'greater_than', conditionValue: '7' },
-      },
-      {
-        id: 'a9',
-        type: 'send_sms',
-        config: {
-          messageTemplate: 'We miss you {{customer_name}}! Here\'s a special {{discount_code}} for 20% off. Come back and shop today!',
-          segmentFilter: 'at_risk',
-        },
-      },
+      { id: 'a7', type: 'wait', config: { delayHours: '168' } },
+      { id: 'a8', type: 'check_condition', config: { conditionField: 'last_order_days', conditionOperator: 'greater_than', conditionValue: '7' } },
+      { id: 'a9', type: 'send_sms', config: { messageTemplate: "We miss you {{customer_name}}! Here's a special {{discount_code}} for 20% off. Come back and shop today!", segmentFilter: 'at_risk' } },
     ],
     isActive: false,
     executionCount: 1890,
@@ -211,18 +179,8 @@ const sampleRules: AutomationRule[] = [
     triggerType: 'order_created',
     triggerConfig: { paymentMethod: 'cod', condition: 'payment_method' },
     actions: [
-      {
-        id: 'a10',
-        type: 'generate_landing_page',
-        config: { landingPageType: 'cod_confirmation' },
-      },
-      {
-        id: 'a11',
-        type: 'send_sms',
-        config: {
-          messageTemplate: 'Hi {{customer_name}}, confirm your COD order here: [landing_page_url]. Call us if you have questions.',
-        },
-      },
+      { id: 'a10', type: 'generate_landing_page', config: { landingPageType: 'cod_confirmation' } },
+      { id: 'a11', type: 'send_sms', config: { messageTemplate: 'Hi {{customer_name}}, confirm your COD order here: [landing_page_url]. Call us if you have questions.' } },
     ],
     isActive: true,
     executionCount: 8450,
@@ -231,19 +189,23 @@ const sampleRules: AutomationRule[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 function formatNumber(num: number): string {
   if (num >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
   return num.toString();
 }
 
 function formatRelativeTime(dateStr: string): string {
+  if (!dateStr) return 'Never';
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
   const diffMinutes = Math.floor(diffMs / 60000);
   const diffHours = Math.floor(diffMinutes / 60);
   const diffDays = Math.floor(diffHours / 24);
-
   if (diffMinutes < 60) return `${diffMinutes}m ago`;
   if (diffHours < 24) return `${diffHours}h ago`;
   return `${diffDays}d ago`;
@@ -267,6 +229,10 @@ function getTriggerDescription(rule: AutomationRule): string {
       return cfg.label;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Action Flow Component
+// ---------------------------------------------------------------------------
 
 function ActionFlow({ actions }: { actions: AutomationAction[] }) {
   return (
@@ -309,7 +275,9 @@ function ActionFlow({ actions }: { actions: AutomationAction[] }) {
   );
 }
 
-import { ChevronRight } from 'lucide-react';
+// ---------------------------------------------------------------------------
+// Rule Dialog
+// ---------------------------------------------------------------------------
 
 interface RuleFormData {
   name: string;
@@ -495,7 +463,6 @@ function RuleDialog({
                 </Select>
               </div>
 
-              {/* Dynamic trigger conditions */}
               {formData.triggerType === 'cart_abandoned' && (
                 <div className="space-y-2">
                   <Label htmlFor="inactivity-minutes">After X minutes of inactivity</Label>
@@ -640,7 +607,6 @@ function RuleDialog({
                       key={action.id}
                       className="relative border rounded-lg p-4 space-y-3"
                     >
-                      {/* Action number + grip */}
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                           <div className="size-6 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground">
@@ -684,7 +650,6 @@ function RuleDialog({
                         </Select>
                       </div>
 
-                      {/* Action-specific config */}
                       {action.type === 'send_sms' && (
                         <div className="space-y-2">
                           <Label>Message Template</Label>
@@ -826,11 +791,117 @@ function RuleDialog({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Skeletons
+// ---------------------------------------------------------------------------
+
+function RuleCardSkeleton() {
+  return (
+    <Card className="overflow-hidden">
+      <Skeleton className="h-1 w-full" />
+      <div className="flex flex-col lg:flex-row lg:items-center gap-4 p-5">
+        <div className="flex-1 min-w-0 space-y-3">
+          <div className="flex items-start gap-3">
+            <Skeleton className="size-9 rounded-lg shrink-0" />
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center gap-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+                <Skeleton className="h-5 w-14 rounded-full" />
+              </div>
+              <Skeleton className="h-3 w-64" />
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Skeleton className="size-3" />
+            <Skeleton className="h-3 w-48" />
+          </div>
+          <div className="space-y-1">
+            <Skeleton className="h-2.5 w-20" />
+            <div className="flex gap-1">
+              {[1, 2, 3].map((i) => (
+                <Skeleton key={i} className="h-6 w-16 rounded-md" />
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="flex lg:flex-col items-center lg:items-end gap-3 shrink-0 lg:min-w-[140px]">
+          <Skeleton className="h-6 w-16" />
+          <Skeleton className="h-4 w-20" />
+          <div className="flex gap-1">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="size-8 rounded-md" />
+            ))}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function StatsSkeleton() {
+  return (
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      {[1, 2, 3, 4].map((i) => (
+        <Card key={i} className="py-4">
+          <CardContent className="flex items-center gap-3">
+            <Skeleton className="size-10 rounded-lg" />
+            <div className="space-y-1.5">
+              <Skeleton className="h-7 w-12" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+          </CardContent>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main Page
+// ---------------------------------------------------------------------------
+
 export default function AutomationPage() {
-  const [rules, setRules] = useState<AutomationRule[]>(sampleRules);
+  const [rules, setRules] = useState<AutomationRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingRule, setEditingRule] = useState<AutomationRule | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // Fetch automation rules on mount
+  // TODO: Replace this with a dedicated /api/automation-rules endpoint once built
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchRules() {
+      setLoading(true);
+      setFetchError(null);
+      try {
+        const res = await fetch('/api/settings?shopId=demo-shop-1');
+        if (!res.ok) throw new Error(`API returned ${res.status}`);
+        const json = await res.json();
+        if (json.success && json.data?.automationRules) {
+          // If the settings API ever includes automation rules, use them
+          if (!cancelled) setRules(json.data.automationRules);
+        } else {
+          // No dedicated endpoint yet — use seeded fallback data
+          if (!cancelled) setRules(fallbackRules);
+        }
+      } catch {
+        // On error, use fallback data instead of showing empty
+        if (!cancelled) {
+          setRules(fallbackRules);
+          setFetchError(null); // Don't show error — fallback is available
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    fetchRules();
+    return () => { cancelled = true; };
+  }, []);
 
   const toggleRuleActive = (ruleId: string) => {
     setRules((prev) =>
@@ -894,71 +965,103 @@ export default function AutomationPage() {
       </div>
 
       {/* Summary Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card className="py-4">
-          <CardContent className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-              <Settings2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+      {loading ? (
+        <StatsSkeleton />
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <Card className="py-4">
+            <CardContent className="flex items-center gap-3">
+              <div className="size-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                <Settings2 className="size-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{rules.length}</p>
+                <p className="text-xs text-muted-foreground">Total Rules</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="py-4">
+            <CardContent className="flex items-center gap-3">
+              <div className="size-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                <Play className="size-5 text-emerald-600 dark:text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{activeRules}</p>
+                <p className="text-xs text-muted-foreground">Active</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="py-4">
+            <CardContent className="flex items-center gap-3">
+              <div className="size-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
+                <Pause className="size-5 text-gray-600 dark:text-gray-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{rules.length - activeRules}</p>
+                <p className="text-xs text-muted-foreground">Paused</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card className="py-4">
+            <CardContent className="flex items-center gap-3">
+              <div className="size-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <Activity className="size-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{formatNumber(totalExecutions)}</p>
+                <p className="text-xs text-muted-foreground">Executions</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Error state (only when no fallback available) */}
+      {fetchError && !loading && rules.length === 0 && (
+        <Card className="border-red-200 dark:border-red-900">
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-4">
+            <div className="size-16 rounded-full bg-red-50 dark:bg-red-950/30 flex items-center justify-center">
+              <AlertCircle className="size-8 text-red-500" />
             </div>
-            <div>
-              <p className="text-2xl font-bold">{rules.length}</p>
-              <p className="text-xs text-muted-foreground">Total Rules</p>
-            </div>
+            <h3 className="text-lg font-semibold">Failed to load automation rules</h3>
+            <p className="text-muted-foreground text-center max-w-md">{fetchError}</p>
+            <Button variant="outline" onClick={() => window.location.reload()}>
+              <RefreshCw className="size-4" />
+              Retry
+            </Button>
           </CardContent>
         </Card>
-        <Card className="py-4">
-          <CardContent className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
-              <Play className="size-5 text-emerald-600 dark:text-emerald-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{activeRules}</p>
-              <p className="text-xs text-muted-foreground">Active</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="py-4">
-          <CardContent className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
-              <Pause className="size-5 text-gray-600 dark:text-gray-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{rules.length - activeRules}</p>
-              <p className="text-xs text-muted-foreground">Paused</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card className="py-4">
-          <CardContent className="flex items-center gap-3">
-            <div className="size-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-              <Activity className="size-5 text-amber-600 dark:text-amber-400" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{formatNumber(totalExecutions)}</p>
-              <p className="text-xs text-muted-foreground">Executions</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      )}
+
+      {/* Loading skeleton for rule cards */}
+      {loading && (
+        <div className="space-y-4">
+          {[1, 2, 3, 4].map((i) => (
+            <RuleCardSkeleton key={i} />
+          ))}
+        </div>
+      )}
 
       {/* Rules List */}
-      <div className="space-y-4">
-        {rules.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 px-4">
-            <div className="size-24 rounded-full bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center mb-6">
-              <Settings2 className="size-10 text-emerald-500" />
-            </div>
-            <h3 className="text-xl font-semibold mb-2">No automation rules yet</h3>
-            <p className="text-muted-foreground text-center max-w-md mb-6">
-              Create your first automation rule to start sending triggered SMS messages automatically.
-            </p>
-            <Button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white">
-              <Plus className="size-4" />
-              Create your first rule
-            </Button>
+      {!loading && rules.length === 0 && !fetchError && (
+        <div className="flex flex-col items-center justify-center py-20 px-4">
+          <div className="size-24 rounded-full bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center mb-6">
+            <Settings2 className="size-10 text-emerald-500" />
           </div>
-        ) : (
-          rules.map((rule) => {
+          <h3 className="text-xl font-semibold mb-2">No automation rules yet</h3>
+          <p className="text-muted-foreground text-center max-w-md mb-6">
+            Create your first automation rule to start sending triggered SMS messages automatically.
+          </p>
+          <Button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+            <Plus className="size-4" />
+            Create your first rule
+          </Button>
+        </div>
+      )}
+
+      {!loading && rules.length > 0 && (
+        <div className="space-y-4">
+          {rules.map((rule) => {
             const tcfg = triggerConfig[rule.triggerType];
             const TriggerIcon = tcfg.icon;
 
@@ -1079,9 +1182,9 @@ export default function AutomationPage() {
                 </div>
               </Card>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
 
       {/* Rule Dialog */}
       <RuleDialog

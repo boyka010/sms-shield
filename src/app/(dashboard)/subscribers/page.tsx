@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Search,
   Download,
@@ -18,6 +18,7 @@ import {
   CircleX,
   Phone,
   Filter,
+  AlertCircle,
 } from 'lucide-react';
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -26,6 +27,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Select,
   SelectContent,
@@ -48,6 +50,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useSubscriberStore } from '@/stores/use-subscriber-store';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -61,24 +64,7 @@ type Segment =
   | 'HIBERNATING'
   | 'LOST';
 
-type Source = 'Popup' | 'Checkout' | 'API';
-type SubscriberStatus = 'verified' | 'unverified';
-
-interface Subscriber {
-  id: string;
-  phone: string;
-  phoneDisplay: string;
-  firstName: string;
-  lastName: string;
-  segment: Segment;
-  source: Source;
-  orders: number;
-  revenue: number;
-  lastOrderDate: string | null;
-  lastOrderRelative: string;
-  status: SubscriberStatus;
-  createdAt: string;
-}
+type DisplaySource = 'Popup' | 'Checkout' | 'API' | 'Import';
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -104,199 +90,241 @@ const SEGMENT_LABELS: Record<Segment, string> = {
   LOST: 'Lost',
 };
 
-const SOURCE_STYLES: Record<Source, string> = {
+const SOURCE_STYLES: Record<DisplaySource, string> = {
   Popup: 'bg-sky-50 text-sky-700 dark:bg-sky-900/20 dark:text-sky-400 border-sky-200 dark:border-sky-800',
   Checkout: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800',
   API: 'bg-violet-50 text-violet-700 dark:bg-violet-900/20 dark:text-violet-400 border-violet-200 dark:border-violet-800',
+  Import: 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-400 border-amber-200 dark:border-amber-800',
 };
 
-const ITEMS_PER_PAGE = 25;
-
-// ── Sample Data ──────────────────────────────────────────────────────────
-
-const SUBSCRIBERS: Subscriber[] = [
-  { id: '1', phone: '01012345678', phoneDisplay: '010 1234 5678', firstName: 'Ahmed', lastName: 'El-Masry', segment: 'CHAMPION', source: 'Checkout', orders: 47, revenue: 38450, lastOrderDate: '2025-01-13', lastOrderRelative: '2 hours ago', status: 'verified', createdAt: '2023-04-12' },
-  { id: '2', phone: '01198765432', phoneDisplay: '011 9876 5432', firstName: 'Fatma', lastName: 'Hassan', segment: 'CHAMPION', source: 'Checkout', orders: 52, revenue: 42100, lastOrderDate: '2025-01-13', lastOrderRelative: '3 hours ago', status: 'verified', createdAt: '2023-02-28' },
-  { id: '3', phone: '01255667788', phoneDisplay: '012 5566 7788', firstName: 'Mohamed', lastName: 'Ibrahim', segment: 'LOYAL', source: 'Popup', orders: 28, revenue: 19800, lastOrderDate: '2025-01-12', lastOrderRelative: 'Yesterday', status: 'verified', createdAt: '2023-08-15' },
-  { id: '4', phone: '01099887766', phoneDisplay: '010 9988 7766', firstName: 'Sara', lastName: 'Khalil', segment: 'LOYAL', source: 'Checkout', orders: 31, revenue: 22300, lastOrderDate: '2025-01-11', lastOrderRelative: '2 days ago', status: 'verified', createdAt: '2023-06-01' },
-  { id: '5', phone: '01533445566', phoneDisplay: '015 3344 5566', firstName: 'Omar', lastName: 'Abdel-Rahim', segment: 'POTENTIAL_LOYALIST', source: 'API', orders: 12, revenue: 8900, lastOrderDate: '2025-01-10', lastOrderRelative: '3 days ago', status: 'verified', createdAt: '2024-01-20' },
-  { id: '6', phone: '01122334455', phoneDisplay: '011 2233 4455', firstName: 'Nour', lastName: 'El-Din', segment: 'POTENTIAL_LOYALIST', source: 'Checkout', orders: 9, revenue: 6400, lastOrderDate: '2025-01-09', lastOrderRelative: '4 days ago', status: 'verified', createdAt: '2024-03-10' },
-  { id: '7', phone: '01244556677', phoneDisplay: '012 4455 6677', firstName: '', lastName: '', segment: 'NEW_CUSTOMER', source: 'Popup', orders: 1, revenue: 450, lastOrderDate: '2025-01-12', lastOrderRelative: 'Yesterday', status: 'verified', createdAt: '2025-01-12' },
-  { id: '8', phone: '01066778899', phoneDisplay: '010 6677 8899', firstName: 'Youssef', lastName: 'Mansour', segment: 'NEW_CUSTOMER', source: 'Checkout', orders: 2, revenue: 1200, lastOrderDate: '2025-01-11', lastOrderRelative: '2 days ago', status: 'unverified', createdAt: '2025-01-08' },
-  { id: '9', phone: '01577889900', phoneDisplay: '015 7788 9900', firstName: 'Hana', lastName: 'Saeed', segment: 'AT_RISK', source: 'Checkout', orders: 15, revenue: 11200, lastOrderDate: '2024-11-28', lastOrderRelative: '46 days ago', status: 'verified', createdAt: '2023-09-05' },
-  { id: '10', phone: '01188990011', phoneDisplay: '011 8899 0011', firstName: 'Khaled', lastName: 'Fathy', segment: 'AT_RISK', source: 'API', orders: 18, revenue: 13500, lastOrderDate: '2024-12-05', lastOrderRelative: '39 days ago', status: 'verified', createdAt: '2023-07-22' },
-  { id: '11', phone: '01299001122', phoneDisplay: '012 9900 1122', firstName: 'Mariam', lastName: 'Youssef', segment: 'PRICE_SENSITIVE', source: 'Popup', orders: 22, revenue: 9800, lastOrderDate: '2025-01-08', lastOrderRelative: '5 days ago', status: 'verified', createdAt: '2023-11-10' },
-  { id: '12', phone: '01000112233', phoneDisplay: '010 0011 2233', firstName: 'Ali', lastName: 'Reda', segment: 'PRICE_SENSITIVE', source: 'Checkout', orders: 19, revenue: 7600, lastOrderDate: '2025-01-06', lastOrderRelative: '1 week ago', status: 'verified', createdAt: '2023-12-01' },
-  { id: '13', phone: '01511223344', phoneDisplay: '015 1122 3344', firstName: '', lastName: 'El-Sayed', segment: 'HIBERNATING', source: 'Popup', orders: 8, revenue: 5200, lastOrderDate: '2024-09-15', lastOrderRelative: '4 months ago', status: 'verified', createdAt: '2023-05-20' },
-  { id: '14', phone: '01122334466', phoneDisplay: '011 2233 4466', firstName: 'Rania', lastName: 'Mahmoud', segment: 'HIBERNATING', source: 'Checkout', orders: 6, revenue: 3800, lastOrderDate: '2024-08-22', lastOrderRelative: '5 months ago', status: 'unverified', createdAt: '2023-08-14' },
-  { id: '15', phone: '01233445588', phoneDisplay: '012 3344 5588', firstName: 'Hassan', lastName: 'Mourad', segment: 'LOST', source: 'API', orders: 4, revenue: 2100, lastOrderDate: '2024-04-10', lastOrderRelative: '9 months ago', status: 'verified', createdAt: '2023-03-18' },
-  { id: '16', phone: '01044556699', phoneDisplay: '010 4455 6699', firstName: 'Amira', lastName: 'Tawfik', segment: 'LOST', source: 'Popup', orders: 3, revenue: 1450, lastOrderDate: '2024-03-05', lastOrderRelative: '10 months ago', status: 'verified', createdAt: '2023-06-25' },
-  { id: '17', phone: '01555667700', phoneDisplay: '015 5566 7700', firstName: 'Ibrahim', lastName: 'Nabil', segment: 'CHAMPION', source: 'Checkout', orders: 41, revenue: 35200, lastOrderDate: '2025-01-13', lastOrderRelative: '1 hour ago', status: 'verified', createdAt: '2023-01-30' },
-  { id: '18', phone: '01166778811', phoneDisplay: '011 6677 8811', firstName: 'Layla', lastName: 'Atef', segment: 'LOYAL', source: 'Checkout', orders: 25, revenue: 17600, lastOrderDate: '2025-01-10', lastOrderRelative: '3 days ago', status: 'verified', createdAt: '2023-10-05' },
-  { id: '19', phone: '01277889922', phoneDisplay: '012 7788 9922', firstName: 'Mahmoud', lastName: 'Salem', segment: 'NEW_CUSTOMER', source: 'API', orders: 1, revenue: 320, lastOrderDate: '2025-01-13', lastOrderRelative: '30 minutes ago', status: 'unverified', createdAt: '2025-01-13' },
-  { id: '20', phone: '01088990033', phoneDisplay: '010 8899 0033', firstName: 'Dina', lastName: 'Fawzy', segment: 'AT_RISK', source: 'Popup', orders: 14, revenue: 10100, lastOrderDate: '2024-12-18', lastOrderRelative: '26 days ago', status: 'verified', createdAt: '2023-09-22' },
-  { id: '21', phone: '01599001144', phoneDisplay: '015 9900 1144', firstName: 'Tarek', lastName: 'Hussein', segment: 'CHAMPION', source: 'Checkout', orders: 56, revenue: 47800, lastOrderDate: '2025-01-12', lastOrderRelative: 'Yesterday', status: 'verified', createdAt: '2022-11-15' },
-  { id: '22', phone: '01100112255', phoneDisplay: '011 0011 2255', firstName: 'Heba', lastName: 'Lotfy', segment: 'POTENTIAL_LOYALIST', source: 'Checkout', orders: 7, revenue: 5100, lastOrderDate: '2025-01-07', lastOrderRelative: '6 days ago', status: 'verified', createdAt: '2024-06-18' },
-  { id: '23', phone: '01211223366', phoneDisplay: '012 1122 3366', firstName: '', lastName: '', segment: 'PRICE_SENSITIVE', source: 'Popup', orders: 16, revenue: 6900, lastOrderDate: '2025-01-04', lastOrderRelative: '9 days ago', status: 'verified', createdAt: '2024-02-14' },
-  { id: '24', phone: '01022334477', phoneDisplay: '010 2233 4477', firstName: 'Sherif', lastName: 'Gamal', segment: 'LOYAL', source: 'API', orders: 33, revenue: 24500, lastOrderDate: '2025-01-11', lastOrderRelative: '2 days ago', status: 'verified', createdAt: '2023-04-08' },
-  { id: '25', phone: '01533445588', phoneDisplay: '015 3344 5588', firstName: 'Aya', lastName: 'Zaki', segment: 'NEW_CUSTOMER', source: 'Checkout', orders: 3, revenue: 2800, lastOrderDate: '2025-01-12', lastOrderRelative: 'Yesterday', status: 'verified', createdAt: '2025-01-05' },
-];
+// Map store source (lowercase) to display source (titlecase)
+function toDisplaySource(source: string): DisplaySource {
+  const map: Record<string, DisplaySource> = {
+    popup: 'Popup',
+    checkout: 'Checkout',
+    api: 'API',
+    import: 'Import',
+  };
+  return map[source] || 'API';
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────
-
-function maskPhone(phone: string): string {
-  // Format: 0XX XXXX XXXX → 0XX XXXX XXXX (show first 4 and group)
-  const digits = phone.replace(/\s/g, '');
-  if (digits.length === 11) {
-    return `${digits.slice(0, 3)} ${digits.slice(3, 7)} XXXX`;
-  }
-  return phone;
-}
 
 function formatCurrency(amount: number): string {
   return `EGP ${amount.toLocaleString('en-US')}`;
 }
 
-function getSegmentBadge(segment: Segment) {
+function formatRelativeDate(dateStr: string | null): string {
+  if (!dateStr) return 'Never';
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMinutes = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMinutes / 60);
+  const diffDays = Math.floor(diffHours / 24);
+  const diffWeeks = Math.floor(diffDays / 7);
+  const diffMonths = Math.floor(diffDays / 30);
+
+  if (diffMinutes < 1) return 'Just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffWeeks === 1) return '1 week ago';
+  if (diffWeeks < 5) return `${diffWeeks} weeks ago`;
+  if (diffMonths === 1) return '1 month ago';
+  return `${diffMonths} months ago`;
+}
+
+function getSegmentBadge(segment: string | null) {
+  const key = segment as Segment | null;
+  if (!key || !SEGMENT_STYLES[key]) {
+    return (
+      <Badge variant="outline" className="border-transparent text-xs text-muted-foreground">
+        —
+      </Badge>
+    );
+  }
   return (
-    <Badge variant="outline" className={`border-transparent font-medium ${SEGMENT_STYLES[segment]}`}>
-      {SEGMENT_LABELS[segment]}
+    <Badge variant="outline" className={`border-transparent font-medium ${SEGMENT_STYLES[key]}`}>
+      {SEGMENT_LABELS[key]}
     </Badge>
   );
 }
 
-function getSourceBadge(source: Source) {
+function getSourceBadge(source: string) {
+  const display = toDisplaySource(source);
   return (
-    <Badge variant="outline" className={`text-xs ${SOURCE_STYLES[source]}`}>
-      {source}
+    <Badge variant="outline" className={`text-xs ${SOURCE_STYLES[display]}`}>
+      {display}
     </Badge>
+  );
+}
+
+// ── Skeleton Table ───────────────────────────────────────────────────────
+
+function SkeletonTable() {
+  return (
+    <>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <TableRow key={i}>
+          <TableCell className="w-10">
+            <Skeleton className="size-4" />
+          </TableCell>
+          <TableCell>
+            <div className="flex items-center gap-2">
+              <Skeleton className="size-3.5" />
+              <Skeleton className="h-4 w-28" />
+            </div>
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-4 w-32" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-24 rounded-full" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-16 rounded-full" />
+          </TableCell>
+          <TableCell className="text-right">
+            <Skeleton className="ml-auto h-4 w-8" />
+          </TableCell>
+          <TableCell className="text-right">
+            <Skeleton className="ml-auto h-4 w-20" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-4 w-20" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="size-5 rounded-full" />
+          </TableCell>
+          <TableCell className="w-12">
+            <Skeleton className="size-8" />
+          </TableCell>
+        </TableRow>
+      ))}
+    </>
   );
 }
 
 // ── Page Component ───────────────────────────────────────────────────────
 
 export default function SubscribersPage() {
-  // State
-  const [searchQuery, setSearchQuery] = useState('');
-  const [segmentFilter, setSegmentFilter] = useState<string>('all');
-  const [sourceFilter, setSourceFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [currentPage, setCurrentPage] = useState(1);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const {
+    subscribers,
+    totalCount,
+    isLoading,
+    error,
+    filters,
+    selectedIds,
+    fetchSubscribers,
+    setSearch,
+    setFilter,
+    resetFilters,
+    toggleSelect,
+    selectAll,
+    clearSelection,
+    deleteSelected,
+  } = useSubscriberStore();
 
-  // Derived
-  const hasFilters = searchQuery || segmentFilter !== 'all' || sourceFilter !== 'all' || statusFilter !== 'all';
+  // Local search input (for debounce UX)
+  const [searchInput, setSearchInput] = useState(filters.search);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const filteredSubscribers = useMemo(() => {
-    return SUBSCRIBERS.filter((sub) => {
-      // Search
-      if (searchQuery) {
-        const q = searchQuery.toLowerCase();
-        const nameMatch = (sub.firstName + ' ' + sub.lastName).toLowerCase().includes(q);
-        const phoneMatch = sub.phone.includes(q) || sub.phoneDisplay.includes(q);
-        if (!nameMatch && !phoneMatch) return false;
-      }
+  // Initial load
+  useEffect(() => {
+    fetchSubscribers();
+  }, [fetchSubscribers]);
 
-      // Segment
-      if (segmentFilter !== 'all' && sub.segment !== segmentFilter) return false;
+  // Debounced search
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setSearchInput(value);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        setSearch(value);
+        fetchSubscribers();
+      }, 300);
+    },
+    [setSearch, fetchSubscribers],
+  );
 
-      // Source
-      if (sourceFilter !== 'all' && sub.source !== sourceFilter) return false;
+  // Cleanup debounce on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
-      // Status
-      if (statusFilter !== 'all' && sub.status !== statusFilter) return false;
-
-      return true;
-    });
-  }, [searchQuery, segmentFilter, sourceFilter, statusFilter]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredSubscribers.length / ITEMS_PER_PAGE));
-
-  // Clamp page
-  const safePage = Math.min(currentPage, totalPages);
-
-  const paginatedSubscribers = useMemo(() => {
-    const start = (safePage - 1) * ITEMS_PER_PAGE;
-    return filteredSubscribers.slice(start, start + ITEMS_PER_PAGE);
-  }, [filteredSubscribers, safePage]);
-
-  const showingStart = filteredSubscribers.length === 0 ? 0 : (safePage - 1) * ITEMS_PER_PAGE + 1;
-  const showingEnd = Math.min(safePage * ITEMS_PER_PAGE, filteredSubscribers.length);
-
-  // Handlers
-  const clearFilters = () => {
-    setSearchQuery('');
-    setSegmentFilter('all');
-    setSourceFilter('all');
-    setStatusFilter('all');
-    setCurrentPage(1);
-    setSelectedIds(new Set());
+  // Filter handlers
+  const handleSegmentChange = (value: string) => {
+    setFilter('segment', value);
+    fetchSubscribers();
   };
 
-  const toggleSelectAll = () => {
-    if (selectedIds.size === paginatedSubscribers.length && paginatedSubscribers.length > 0) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(paginatedSubscribers.map((s) => s.id)));
-    }
+  const handleSourceChange = (value: string) => {
+    setFilter('source', value);
+    fetchSubscribers();
   };
 
-  const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
+  const handleStatusChange = (value: string) => {
+    setFilter('isVerified', value);
+    fetchSubscribers();
   };
 
-  const copyPhone = (id: string, phone: string) => {
-    navigator.clipboard.writeText(phone).catch(() => {});
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2000);
+  const handleClearFilters = () => {
+    resetFilters();
+    setSearchInput('');
+    fetchSubscribers();
   };
 
-  const handleExportCSV = () => {
-    // Build CSV content
-    const headers = ['Phone', 'Name', 'Segment', 'Source', 'Orders', 'Revenue', 'Last Order', 'Status'];
-    const rows = filteredSubscribers.map((s) => [
-      s.phone,
-      `${s.firstName} ${s.lastName}`.trim(),
-      SEGMENT_LABELS[s.segment],
-      s.source,
-      String(s.orders),
-      String(s.revenue),
-      s.lastOrderRelative,
-      s.status,
-    ]);
-    const csv = [headers, ...rows].map((r) => r.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'subscribers.csv';
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(totalCount / filters.pageSize));
+  const showingStart = totalCount === 0 ? 0 : (filters.page - 1) * filters.pageSize + 1;
+  const showingEnd = Math.min(filters.page * filters.pageSize, totalCount);
 
-  const isAllSelected = paginatedSubscribers.length > 0 && selectedIds.size === paginatedSubscribers.length;
-  const isSomeSelected = selectedIds.size > 0 && !isAllSelected;
+  const goToPage = (page: number) => {
+    setFilter('page', page);
+    fetchSubscribers();
+  };
 
   const pageNumbers = useMemo(() => {
     const pages: number[] = [];
     const maxVisible = 5;
-    let start = Math.max(1, safePage - Math.floor(maxVisible / 2));
+    let start = Math.max(1, filters.page - Math.floor(maxVisible / 2));
     const end = Math.min(totalPages, start + maxVisible - 1);
     start = Math.max(1, end - maxVisible + 1);
     for (let i = start; i <= end; i++) {
       pages.push(i);
     }
     return pages;
-  }, [safePage, totalPages]);
+  }, [filters.page, totalPages]);
+
+  // Selection
+  const isAllSelected = subscribers.length > 0 && selectedIds.size === subscribers.length;
+  const isSomeSelected = selectedIds.size > 0 && !isAllSelected;
+
+  // Bulk delete
+  const handleDeleteSelected = async () => {
+    if (selectedIds.size === 0) return;
+    await deleteSelected();
+  };
+
+  // Copy phone
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyPhone = (id: string, phone: string) => {
+    navigator.clipboard.writeText(phone).catch(() => {});
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  // Export
+  const handleExport = () => {
+    window.open('/api/export?shopId=demo-shop-1&format=csv', '_blank');
+  };
+
+  // Active filters check
+  const hasFilters = filters.search || filters.segment !== 'all' || filters.source !== 'all' || filters.isVerified !== 'all';
 
   return (
     <div className="space-y-6">
@@ -309,12 +337,16 @@ export default function SubscribersPage() {
               Manage your SMS subscriber base
             </p>
           </div>
-          <Badge variant="secondary" className="mt-1 h-fit px-2.5 py-0.5 text-sm font-semibold tabular-nums">
-            {filteredSubscribers.length.toLocaleString()}
-          </Badge>
+          {isLoading ? (
+            <Skeleton className="mt-1 h-6 w-16 rounded-full" />
+          ) : (
+            <Badge variant="secondary" className="mt-1 h-fit px-2.5 py-0.5 text-sm font-semibold tabular-nums">
+              {totalCount.toLocaleString()}
+            </Badge>
+          )}
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={handleExportCSV} className="gap-2">
+          <Button variant="outline" size="sm" onClick={handleExport} className="gap-2">
             <Download className="size-4" />
             Export CSV
           </Button>
@@ -325,6 +357,22 @@ export default function SubscribersPage() {
         </div>
       </div>
 
+      {/* ── Error State ───────────────────────────────────────────── */}
+      {error && (
+        <div className="flex items-center gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-950/40">
+          <AlertCircle className="size-4 text-red-500" />
+          <span className="text-sm text-red-700 dark:text-red-400">{error}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => fetchSubscribers()}
+            className="ml-auto text-xs text-red-600 hover:text-red-800 dark:text-red-400"
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* ── Filters Bar ──────────────────────────────────────────── */}
       <Card className="shadow-sm">
         <CardContent className="py-4">
@@ -334,17 +382,14 @@ export default function SubscribersPage() {
               <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search by phone or name..."
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setCurrentPage(1);
-                }}
+                value={searchInput}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="pl-9"
               />
             </div>
 
             {/* Segment Filter */}
-            <Select value={segmentFilter} onValueChange={(v) => { setSegmentFilter(v); setCurrentPage(1); }}>
+            <Select value={filters.segment} onValueChange={handleSegmentChange}>
               <SelectTrigger className="w-[170px]">
                 <Filter className="size-3.5 text-muted-foreground" />
                 <SelectValue placeholder="Segment" />
@@ -363,20 +408,21 @@ export default function SubscribersPage() {
             </Select>
 
             {/* Source Filter */}
-            <Select value={sourceFilter} onValueChange={(v) => { setSourceFilter(v); setCurrentPage(1); }}>
+            <Select value={filters.source} onValueChange={handleSourceChange}>
               <SelectTrigger className="w-[130px]">
                 <SelectValue placeholder="Source" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All Sources</SelectItem>
-                <SelectItem value="Popup">Popup</SelectItem>
-                <SelectItem value="Checkout">Checkout</SelectItem>
-                <SelectItem value="API">API</SelectItem>
+                <SelectItem value="popup">Popup</SelectItem>
+                <SelectItem value="checkout">Checkout</SelectItem>
+                <SelectItem value="api">API</SelectItem>
+                <SelectItem value="import">Import</SelectItem>
               </SelectContent>
             </Select>
 
             {/* Status Filter */}
-            <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}>
+            <Select value={filters.isVerified} onValueChange={handleStatusChange}>
               <SelectTrigger className="w-[130px]">
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -389,7 +435,7 @@ export default function SubscribersPage() {
 
             {/* Clear Filters */}
             {hasFilters && (
-              <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1.5 text-muted-foreground">
+              <Button variant="ghost" size="sm" onClick={handleClearFilters} className="gap-1.5 text-muted-foreground">
                 <X className="size-3.5" />
                 Clear filters
               </Button>
@@ -413,7 +459,13 @@ export default function SubscribersPage() {
             <Download className="size-3.5" />
             Export Selected
           </Button>
-          <Button size="sm" variant="outline" className="gap-1.5 text-xs text-destructive hover:text-destructive">
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 text-xs text-destructive hover:text-destructive"
+            onClick={handleDeleteSelected}
+            disabled={isLoading}
+          >
             <Trash2 className="size-3.5" />
             Delete Selected
           </Button>
@@ -431,12 +483,11 @@ export default function SubscribersPage() {
                     <Checkbox
                       checked={isAllSelected}
                       ref={(el) => {
-                        // For indeterminate state
                         if (el) {
                           (el as unknown as HTMLInputElement).indeterminate = isSomeSelected;
                         }
                       }}
-                      onCheckedChange={toggleSelectAll}
+                      onCheckedChange={selectAll}
                       aria-label="Select all"
                     />
                   </TableHead>
@@ -452,15 +503,18 @@ export default function SubscribersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedSubscribers.length === 0 ? (
+                {isLoading ? (
+                  <SkeletonTable />
+                ) : subscribers.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="h-32 text-center text-muted-foreground">
                       No subscribers found matching your filters.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedSubscribers.map((subscriber) => {
+                  subscribers.map((subscriber) => {
                     const isSelected = selectedIds.has(subscriber.id);
+                    const displayName = subscriber.maskedPhone || subscriber.phoneNumber || '—';
                     return (
                       <TableRow
                         key={subscriber.id}
@@ -472,7 +526,7 @@ export default function SubscribersPage() {
                           <Checkbox
                             checked={isSelected}
                             onCheckedChange={() => toggleSelect(subscriber.id)}
-                            aria-label={`Select ${subscriber.phoneDisplay}`}
+                            aria-label={`Select ${displayName}`}
                           />
                         </TableCell>
 
@@ -480,9 +534,9 @@ export default function SubscribersPage() {
                         <TableCell>
                           <div className="flex items-center gap-2">
                             <Phone className="size-3.5 text-muted-foreground" />
-                            <span className="font-mono text-sm">{maskPhone(subscriber.phone)}</span>
+                            <span className="font-mono text-sm">{displayName}</span>
                             <button
-                              onClick={() => copyPhone(subscriber.id, subscriber.phone)}
+                              onClick={() => copyPhone(subscriber.id, displayName)}
                               className="rounded p-0.5 opacity-0 transition-opacity hover:bg-muted group-hover:opacity-100"
                               title="Copy phone number"
                             >
@@ -500,7 +554,7 @@ export default function SubscribersPage() {
                           <span className="text-sm font-medium">
                             {subscriber.firstName && subscriber.lastName
                               ? `${subscriber.firstName} ${subscriber.lastName}`
-                              : '—'}
+                              : subscriber.firstName || subscriber.lastName || '—'}
                           </span>
                         </TableCell>
 
@@ -512,24 +566,26 @@ export default function SubscribersPage() {
 
                         {/* Orders */}
                         <TableCell className="text-right">
-                          <span className="tabular-nums text-sm">{subscriber.orders}</span>
+                          <span className="tabular-nums text-sm">{subscriber.totalOrdersCount}</span>
                         </TableCell>
 
                         {/* Revenue */}
                         <TableCell className="text-right">
-                          <span className="tabular-nums text-sm font-medium">{formatCurrency(subscriber.revenue)}</span>
+                          <span className="tabular-nums text-sm font-medium">
+                            {formatCurrency(subscriber.totalRevenue)}
+                          </span>
                         </TableCell>
 
                         {/* Last Order */}
                         <TableCell>
                           <span className="text-sm text-muted-foreground">
-                            {subscriber.lastOrderRelative || 'Never'}
+                            {formatRelativeDate(subscriber.lastOrderAt)}
                           </span>
                         </TableCell>
 
                         {/* Status */}
                         <TableCell>
-                          {subscriber.status === 'verified' ? (
+                          {subscriber.isVerified ? (
                             <CircleCheck className="size-5 text-emerald-500" />
                           ) : (
                             <CircleX className="size-5 text-gray-400" />
@@ -575,9 +631,10 @@ export default function SubscribersPage() {
       {/* ── Pagination ───────────────────────────────────────────── */}
       <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
         <p className="text-sm text-muted-foreground">
-          Showing <span className="font-medium text-foreground">{showingStart}</span>–
+          Showing{' '}
+          <span className="font-medium text-foreground">{showingStart}</span>–
           <span className="font-medium text-foreground">{showingEnd}</span> of{' '}
-          <span className="font-medium text-foreground">{filteredSubscribers.length.toLocaleString()}</span>{' '}
+          <span className="font-medium text-foreground">{totalCount.toLocaleString()}</span>{' '}
           subscribers
         </p>
         <div className="flex items-center gap-1">
@@ -585,8 +642,8 @@ export default function SubscribersPage() {
             variant="outline"
             size="icon"
             className="size-8"
-            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-            disabled={safePage <= 1}
+            onClick={() => goToPage(filters.page - 1)}
+            disabled={filters.page <= 1 || isLoading}
           >
             <ChevronLeft className="size-4" />
             <span className="sr-only">Previous</span>
@@ -598,7 +655,7 @@ export default function SubscribersPage() {
                 variant="ghost"
                 size="sm"
                 className="size-8"
-                onClick={() => setCurrentPage(1)}
+                onClick={() => goToPage(1)}
               >
                 1
               </Button>
@@ -611,10 +668,10 @@ export default function SubscribersPage() {
           {pageNumbers.map((page) => (
             <Button
               key={page}
-              variant={page === safePage ? 'default' : 'ghost'}
+              variant={page === filters.page ? 'default' : 'ghost'}
               size="sm"
               className="size-8"
-              onClick={() => setCurrentPage(page)}
+              onClick={() => goToPage(page)}
             >
               {page}
             </Button>
@@ -629,7 +686,7 @@ export default function SubscribersPage() {
                 variant="ghost"
                 size="sm"
                 className="size-8"
-                onClick={() => setCurrentPage(totalPages)}
+                onClick={() => goToPage(totalPages)}
               >
                 {totalPages}
               </Button>
@@ -640,8 +697,8 @@ export default function SubscribersPage() {
             variant="outline"
             size="icon"
             className="size-8"
-            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-            disabled={safePage >= totalPages}
+            onClick={() => goToPage(filters.page + 1)}
+            disabled={filters.page >= totalPages || isLoading}
           >
             <ChevronRight className="size-4" />
             <span className="sr-only">Next</span>

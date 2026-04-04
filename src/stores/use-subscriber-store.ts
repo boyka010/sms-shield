@@ -20,6 +20,7 @@ export interface SubscriberType {
   totalRevenue: number;
   lastOrderAt: string | null;
   firstOrderAt: string | null;
+  segment: string | null;
   createdAt: string;
   updatedAt: string;
   maskedPhone?: string;

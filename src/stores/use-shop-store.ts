@@ -9,7 +9,7 @@ interface Shop {
   currency: string;
 }
 
-interface ShopSettings {
+export interface ShopSettings {
   id: string;
   shopId: string;
   popupEnabled: boolean;
