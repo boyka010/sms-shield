@@ -192,7 +192,7 @@ function AppSidebar() {
 
 function DashboardHeader() {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4">
+    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 backdrop-blur-xl supports-[backdrop-filter]:bg-background/60 px-4">
       <div className="flex items-center gap-2">
         <SidebarTrigger className="-ml-1" />
         <Separator orientation="vertical" className="mr-2 h-4" />
@@ -215,7 +215,7 @@ export default function DashboardLayout({
       <AppSidebar />
       <SidebarInset>
         <DashboardHeader />
-        <main className="flex-1 overflow-auto p-6 scrollbar-thin">
+        <main className="flex-1 overflow-auto px-6 py-5 scrollbar-thin">
           <ErrorBoundary>
             <PageTransition>
               {children}
