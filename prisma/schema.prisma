@@ -1,0 +1,387 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  MERCHANT
+  CUSTOMER
+}
+
+enum SegmentType {
+  CHAMPIONS
+  LOYAL
+  AT_RISK
+  PRICE_SENSITIVE
+  NEW
+  DORMANT
+}
+
+enum SmsGateway {
+  SMS_MISR
+  VICTORY_LINK
+  WE_API
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  RETRY
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum CampaignType {
+  WELCOME
+  ABANDONED_CART
+  POST_PURCHASE
+  WIN_BACK
+  LOYALTY
+  SEGMENT
+}
+
+model Merchant {
+  id              String    @id @default(cuid())
+  shopifyStoreUrl String    @unique
+  shopifyApiKey   String
+  shopifyApiSecret String
+  accessToken     String
+  phoneNumber     String?
+  email           String?
+  companyName     String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  apiKeys         ApiKey[]
+  campaigns       Campaign[]
+  contacts        Contact[]
+  automations     Automation[]
+  settings        MerchantSettings?
+
+  @@index([shopifyStoreUrl])
+}
+
+model MerchantSettings {
+  id                    String   @id @default(cuid())
+  merchantId            String   @unique
+  merchant              Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  discountCode          String?
+  discountPercentage   Float?
+  discountType         String    @default("percentage")
+  popupEnabled         Boolean  @default(true)
+  popupTriggerDelay    Int      @default(5000)
+  popupExitIntent      Boolean  @default(true)
+
+  automationsEnabled   Boolean  @default(true)
+  abandonedCartDelay  Int      @default(30)
+  winBackDelay         Int      @default(72)
+
+  smsCredits            Int      @default(0)
+  monthlySmsLimit      Int      @default(1000)
+
+  timezone             String   @default("Africa/Cairo")
+
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  merchantId  String
+  merchant    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name        String
+  keyHash     String
+  keyPrefix   String
+  encryptedKey String
+
+  lastUsedAt  DateTime?
+  expiresAt  DateTime?
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([merchantId])
+  @@index([keyHash])
+}
+
+model Contact {
+  id              String       @id @default(cuid())
+  merchantId      String
+  merchant        Merchant     @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  phoneNumber     String
+  phoneNumberHash String
+  email           String?
+  emailHash       String?
+  firstName       String?
+  lastName        String?
+
+  tags            String[]
+  segment         SegmentType  @default(NEW)
+  totalOrders     Int           @default(0)
+  totalSpent      Float         @default(0)
+  averageOrderValue Float      @default(0)
+  lastOrderDate   DateTime?
+  firstOrderDate  DateTime?
+
+  rfmRecencyScore Int           @default(0)
+  rfmFrequencyScore Int        @default(0)
+  rfmMonetaryScore Int         @default(0)
+  rfmTotalScore   Int          @default(0)
+
+  smsOptIn        Boolean      @default(true)
+  smsOptInDate    DateTime?
+  whatsappOptIn  Boolean      @default(false)
+
+  preferences     Json?
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  orders          Order[]
+  smsLogs         SmsLog[]
+
+  @@unique([merchantId, phoneNumber])
+  @@index([merchantId])
+  @@index([phoneNumberHash])
+  @@index([segment])
+  @@index([rfmTotalScore])
+}
+
+model Order {
+  id              String    @id @default(cuid())
+  contactId       String
+  contact         Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  shopifyOrderId  String
+  orderNumber     String
+  totalPrice      Float
+  currency        String    @default("EGP")
+  financialStatus String
+  fulfillmentStatus String?
+
+  lineItems       Json?
+
+  customerId      String?
+  checkoutId      String?
+
+  orderDate       DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([shopifyOrderId])
+  @@index([contactId])
+  @@index([orderDate])
+  @@index([orderNumber])
+}
+
+model Campaign {
+  id              String         @id @default(cuid())
+  merchantId      String
+  merchant        Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name            String
+  type            CampaignType
+  status          CampaignStatus @default(DRAFT)
+
+  messageTemplate String
+  messageVariables Json?
+
+  segmentFilter   Json?
+
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+
+  totalRecipients Int           @default(0)
+  sentCount       Int           @default(0)
+  deliveredCount  Int           @default(0)
+  failedCount     Int           @default(0)
+  clickCount      Int           @default(0)
+
+  budget          Int?
+  costPerSms      Float?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  jobs            SmsJob[]
+
+  @@index([merchantId])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model Automation {
+  id              String   @id @default(cuid())
+  merchantId      String
+  merchant        Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  name            String
+  triggerType     String
+  isActive        Boolean  @default(true)
+
+  delayMinutes    Int      @default(30)
+  touchNumber     Int      @default(1)
+  maxTouches      Int      @default(3)
+
+  messageTemplate String
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  jobs            SmsJob[]
+
+  @@index([merchantId])
+  @@index([triggerType])
+}
+
+model SmsJob {
+  id              String     @id @default(cuid())
+  campaignId      String?
+  campaign        Campaign?  @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  automationId    String?
+  automation      Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  contactId       String
+  phoneNumber     String
+
+  message         String
+  gateway         SmsGateway @default(SMS_MISR)
+
+  status          JobStatus  @default(PENDING)
+
+  scheduledAt     DateTime?
+  processedAt     DateTime?
+  deliveredAt     DateTime?
+  failedAt        DateTime?
+
+  retryCount      Int        @default(0)
+  maxRetries      Int        @default(3)
+  errorMessage    String?
+
+  cost            Float?
+
+  externalId      String?
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([campaignId])
+  @@index([automationId])
+  @@index([contactId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([phoneNumber])
+}
+
+model SmsLog {
+  id              String     @id @default(cuid())
+  contactId       String
+  contact         Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  jobId           String?
+  campaignId      String?
+  automationId   String?
+
+  gateway         SmsGateway
+  direction       String     @default("outbound")
+
+  phoneNumber     String
+  message         String
+
+  status          String
+  cost            Float?
+
+  externalId      String?
+  errorCode       String?
+  errorMessage    String?
+
+  createdAt       DateTime   @default(now())
+
+  @@index([contactId])
+  @@index([phoneNumber])
+  @@index([createdAt])
+}
+
+model WebhookDelivery {
+  id              String   @id @default(cuid())
+  shopifyStoreUrl String
+
+  topic           String
+  webhookId       String?
+  idempotencyKey  String?  @unique
+
+  payloadHash     String
+  payload         Json
+
+  processingTime  Int?
+  statusCode      Int?
+
+  status          String   @default("received")
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([shopifyStoreUrl])
+  @@index([topic])
+  @@index([createdAt])
+  @@index([idempotencyKey])
+}
+
+model CachedRfmCalculation {
+  id              String       @id @default(cuid())
+  merchantId      String
+  segment         SegmentType
+
+  contactCount    Int
+  totalRevenue    Float
+  avgOrderValue   Float
+
+  calculatedAt    DateTime     @default(now())
+
+  @@unique([merchantId, segment])
+  @@index([merchantId])
+  @@index([calculatedAt])
+}
+
+model AuditLog {
+  id              String       @id @default(cuid())
+  merchantId      String
+  userId          String?
+
+  action          String
+  resource        String
+  resourceId      String?
+
+  details         Json?
+
+  ipAddress       String?
+  userAgent       String?
+  piiAccessed     Boolean      @default(false)
+
+  createdAt       DateTime     @default(now())
+
+  @@index([merchantId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+  @@index([piiAccessed])
+}
+}
