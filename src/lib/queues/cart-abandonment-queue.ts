@@ -539,8 +539,7 @@ function formatCurrency(amount: number, currency: string): string {
 // ── Schedule helper — create cron-style jobs for cart abandonment checks ─────
 
 export function scheduleCartAbandonmentChecks(shopId: string): void {
-  const { getQueue: getCartQueue } = await_safeImport();
-  const queue = getCartQueue<CartAbandonmentJobData>('cart-abandonment-check');
+  const queue = getQueue<CartAbandonmentJobData>('cart-abandonment-check');
 
   // Initial check: 30 minutes after cart abandonment
   queue.add(
@@ -567,10 +566,6 @@ export function scheduleCartAbandonmentChecks(shopId: string): void {
   );
 
   logger.info('Cart abandonment checks scheduled', { shopId });
-}
-
-async function await_safeImport() {
-  return await import('./index') as typeof import('./index');
 }
 
 // ── Registration ─────────────────────────────────────────────────────────────
