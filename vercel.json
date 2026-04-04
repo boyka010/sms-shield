@@ -5,19 +5,6 @@
   "installCommand": "npm install",
   "framework": "remix",
   "regions": ["iad1"],
-  "env": {
-    "DATABASE_URL": "@database-url",
-    "REDIS_URL": "@redis-url",
-    "MASTER_KEY": "@master-key",
-    "SHOPIFY_API_KEY": "@shopify-api-key",
-    "SHOPIFY_API_SECRET": "@shopify-api-secret",
-    "SHOPIFY_ACCESS_TOKEN": "@shopify-access-token",
-    "SMS_MISR_API_KEY": "@sms-misr-api-key",
-    "VICTORY_LINK_USERNAME": "@victory-link-username",
-    "VICTORY_LINK_PASSWORD": "@victory-link-password",
-    "WE_API_KEY": "@we-api-key"
-  },
-  "regions": ["iad1"],
   "crons": [
     {
       "path": "/api/cron/daily-rfm",
