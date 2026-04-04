@@ -1,0 +1,476 @@
+// ============================================================================
+// SMS-Shield — Enterprise Shopify App Prisma Schema
+// SMS Marketing | Cart Abandonment Recovery | RFM Segmentation | COD Confirmation
+// Provider: SQLite
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// 1. Shop — Shopify store installations
+// ============================================================================
+
+model Shop {
+  id            String   @id @default(cuid())
+  shopifyDomain String   @unique
+  shopifyToken  String
+  isActive      Boolean  @default(true)
+  plan          String   @default("free")
+  currency      String   @default("EGP")
+  installedAt   DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // — Relations —
+  settings         ShopSettings[]
+  gateways         SMSGatewayConfig[]
+  subscribers      Subscriber[]
+  discountCodes    DiscountCode[]
+  campaigns        Campaign[]
+  webhookEvents    WebhookEvent[]
+  cartAbandonments CartAbandonment[]
+  rfmSegments      RFMSegment[]
+  landingPages     LandingPage[]
+  automationRules  AutomationRule[]
+  touchPoints      TouchPoint[]
+  campaignMessages CampaignMessage[]
+  smsSendLogs      SMSSendLog[]
+
+  @@index([shopifyDomain])
+  @@index([isActive])
+}
+
+// ============================================================================
+// 2. ShopSettings — Per-shop popup & SMS settings
+// ============================================================================
+
+model ShopSettings {
+  id                      String   @id @default(cuid())
+  shopId                  String   @unique
+  popupEnabled            Boolean  @default(true)
+  popupDelaySeconds       Int      @default(5)
+  popupHeadline           String   @default("🎉 Get 10% OFF your first order!")
+  popupSubtext            String   @default("")
+  discountType            String   @default("percentage")
+  discountValue           Int      @default(10)
+  buttonColor             String   @default("#000000")
+  buttonTextColor         String   @default("#FFFFFF")
+  smsConsentText          String   @default("I agree to receive SMS marketing messages and confirm my order via SMS.")
+  codConfirmationEnabled  Boolean  @default(false)
+  autoApplyDiscount       Boolean  @default(true)
+  maxRetriesPerGateway    Int      @default(3)
+  smsRetryIntervalMinutes Int      @default(30)
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  // — Relations —
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+}
+
+// ============================================================================
+// 3. SMSGatewayConfig — Encrypted gateway credentials (AES-256-GCM at app layer)
+// ============================================================================
+
+model SMSGatewayConfig {
+  id                String    @id @default(cuid())
+  shopId            String
+  gatewayType       String // "SMS_MISR" | "VICTORY_LINK" | "WE_API"
+  encryptedUsername String // AES-256-GCM encrypted
+  encryptedPassword String // AES-256-GCM encrypted
+  encryptedApiKey   String? // AES-256-GCM encrypted, optional
+  senderName        String
+  isActive          Boolean   @default(true)
+  priority          Int       @default(0) // lower = higher priority
+  lastHealthCheckAt DateTime?
+  healthStatus      String    @default("unknown") // "unknown" | "healthy" | "degraded" | "down"
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // — Relations —
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, gatewayType])
+  @@index([shopId, isActive])
+  @@index([priority])
+}
+
+// ============================================================================
+// 4. Subscriber — Captured phone numbers & customer profiles
+// ============================================================================
+
+model Subscriber {
+  id               String    @id @default(cuid())
+  shopId           String
+  phoneNumber      String // encrypted at app layer
+  rawPhoneNumber   String // hashed at app layer, never plain
+  phoneHash        String    @unique // SHA-256 hash for dedup & lookup
+  email            String?
+  firstName        String?
+  lastName         String?
+  consentGranted   Boolean   @default(true)
+  consentTimestamp DateTime  @default(now())
+  source           String    @default("popup") // "popup" | "checkout" | "api" | "import"
+  discountCodeId   String?
+  isVerified       Boolean   @default(false)
+  tags             String    @default("[]") // JSON array string for SQLite
+  totalOrdersCount Int       @default(0)
+  totalRevenue     Float     @default(0)
+  lastOrderAt      DateTime?
+  firstOrderAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  // — Relations —
+  shop             Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  discountCode     DiscountCode?     @relation(fields: [discountCodeId], references: [id])
+  campaigns        CampaignMessage[]
+  rfmSegments      RFMSegment[]
+  landingPages     LandingPage[]
+  touchPoints      TouchPoint[]
+  smsSendLogs      SMSSendLog[]
+  cartAbandonments CartAbandonment[]
+
+  @@index([shopId, consentGranted])
+  @@index([shopId, isVerified])
+  @@index([shopId, source])
+  @@index([shopId, totalRevenue])
+  @@index([shopId, lastOrderAt])
+}
+
+// ============================================================================
+// 5. DiscountCode — Auto-generated discount codes
+// ============================================================================
+
+model DiscountCode {
+  id            String    @id @default(cuid())
+  shopId        String
+  code          String
+  discountType  String    @default("percentage") // "percentage" | "fixed_amount" | "free_shipping"
+  discountValue Float
+  usageCount    Int       @default(0)
+  maxUsageCount Int?
+  isActive      Boolean   @default(true)
+  startsAt      DateTime  @default(now())
+  expiresAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // — Relations —
+  shop        Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subscribers Subscriber[]
+
+  @@unique([shopId, code])
+  @@index([shopId, isActive])
+  @@index([expiresAt])
+}
+
+// ============================================================================
+// 6. Campaign — SMS marketing campaigns
+// ============================================================================
+
+model Campaign {
+  id              String    @id @default(cuid())
+  shopId          String
+  name            String
+  description     String?
+  type            String // "BROADCAST" | "ABANDONED_CART" | "COD_CONFIRMATION" | "RFM_SEGMENT" | "CUSTOM"
+  status          String    @default("draft") // "draft" | "scheduled" | "running" | "paused" | "completed" | "failed" | "cancelled"
+  segmentFilter   String? // JSON string for segment targeting
+  messageTemplate String // mustache template
+  senderName      String?
+  gatewayType     String?
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  totalRecipients Int       @default(0)
+  sentCount       Int       @default(0)
+  deliveredCount  Int       @default(0)
+  failedCount     Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  // — Relations —
+  shop        Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  messages    CampaignMessage[]
+  smsSendLogs SMSSendLog[]
+
+  @@index([shopId, status])
+  @@index([shopId, type])
+  @@index([scheduledAt])
+  @@index([shopId, createdAt])
+}
+
+// ============================================================================
+// 7. CampaignMessage — Individual campaign messages
+// ============================================================================
+
+model CampaignMessage {
+  id                String    @id @default(cuid())
+  campaignId        String
+  subscriberId      String
+  shopId            String
+  gatewayType       String
+  recipientPhone    String // encrypted at app layer
+  messageContent    String
+  externalMessageId String?
+  status            String    @default("pending") // "pending" | "queued" | "sent" | "delivered" | "failed" | "bounced"
+  errorMessage      String?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  failedAt          DateTime?
+  retryCount        Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // — Relations —
+  campaign   Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+  shop       Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, status])
+  @@index([campaignId, status])
+  @@index([subscriberId])
+  @@index([externalMessageId])
+}
+
+// ============================================================================
+// 8. WebhookEvent — Shopify webhook event logging & processing
+// ============================================================================
+
+model WebhookEvent {
+  id                 String    @id @default(cuid())
+  shopId             String
+  topic              String // e.g. "orders/create", "carts/update", "checkouts/create"
+  shopifyDomain      String
+  payload            String // JSON string — full webhook payload
+  processedAt        DateTime?
+  processingStatus   String    @default("pending") // "pending" | "processing" | "completed" | "failed" | "skipped"
+  processingAttempts Int       @default(0)
+  errorMessage       String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // — Relations —
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, topic, processingStatus])
+  @@index([shopifyDomain, topic])
+  @@index([processingStatus, processingAttempts])
+  @@index([createdAt])
+}
+
+// ============================================================================
+// 9. CartAbandonment — Tracked abandoned carts
+// ============================================================================
+
+model CartAbandonment {
+  id                   String    @id @default(cuid())
+  shopId               String
+  shopifyCartToken     String
+  shopifyCustomerId    String?
+  subscriberId         String?
+  customerPhone        String? // encrypted at app layer
+  customerEmail        String?
+  customerName         String?
+  cartTotal            Float     @default(0)
+  currency             String    @default("EGP")
+  lineItemsCount       Int       @default(0)
+  lineItemsData        String // JSON string — cart line items
+  abandonReason        String?
+  recoveryStatus       String    @default("pending") // "pending" | "reminded_1" | "reminded_2" | "reminded_3" | "recovered" | "expired"
+  recoveryDiscountCode String?
+  touchPointId         String?
+  recoveredAt          DateTime?
+  expiresAt            DateTime
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // — Relations —
+  shop       Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subscriber Subscriber? @relation(fields: [subscriberId], references: [id])
+  touchPoint TouchPoint? @relation(fields: [touchPointId], references: [id])
+
+  @@index([shopId, recoveryStatus])
+  @@index([shopId, shopifyCartToken])
+  @@index([shopifyCustomerId])
+  @@index([subscriberId])
+  @@index([expiresAt])
+  @@index([shopId, createdAt])
+}
+
+// ============================================================================
+// 10. TouchPoint — Multi-touch flow tracking
+// ============================================================================
+
+model TouchPoint {
+  id            String    @id @default(cuid())
+  shopId        String
+  subscriberId  String?
+  flowType      String // "CART_ABANDONMENT" | "POST_PURCHASE" | "COD_CONFIRMATION" | "WIN_BACK" | "RFM_CAMPAIGN"
+  flowState     String    @default("initialized") // "initialized" | "in_progress" | "paused" | "completed" | "expired"
+  currentStep   Int       @default(1)
+  totalSteps    Int       @default(3)
+  configuration String // JSON string — timing rules, delays, conditions
+  nextActionAt  DateTime?
+  lastActionAt  DateTime?
+  completedAt   DateTime?
+  isExpired     Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // — Relations —
+  shop             Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subscriber       Subscriber?       @relation(fields: [subscriberId], references: [id])
+  cartAbandonments CartAbandonment[]
+
+  @@index([shopId, flowType, isExpired])
+  @@index([shopId, flowState])
+  @@index([subscriberId])
+  @@index([nextActionAt])
+  @@index([shopId, isExpired])
+}
+
+// ============================================================================
+// 11. RFMSegment — RFM segmentation results
+// ============================================================================
+
+model RFMSegment {
+  id                 String   @id @default(cuid())
+  shopId             String
+  subscriberId       String
+  calculatedAt       DateTime @default(now())
+  recencyScore       Int // 1-5
+  frequencyScore     Int // 1-5
+  monetaryScore      Int // 1-5
+  rfmCompositeScore  Int // 3-15
+  segment            String // "CHAMPION" | "LOYAL" | "POTENTIAL_LOYALIST" | "NEW_CUSTOMER" | "PROMISING" | "NEED_ATTENTION" | "AT_RISK" | "CANT_LOSE" | "HIBERNATING" | "LOST" | "PRICE_SENSITIVE"
+  daysSinceLastOrder Int
+  totalOrders        Int
+  totalRevenue       Float
+  averageOrderValue  Float
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // — Relations —
+  shop       Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, subscriberId, calculatedAt])
+  @@index([shopId, segment])
+  @@index([subscriberId])
+  @@index([rfmCompositeScore])
+  @@index([calculatedAt])
+}
+
+// ============================================================================
+// 12. LandingPage — Generated landing pages for COD confirmation
+// ============================================================================
+
+model LandingPage {
+  id                String    @id @default(cuid())
+  shopId            String
+  subscriberId      String
+  orderName         String // e.g. "#1001"
+  orderId           String?
+  slug              String    @unique // URL-safe identifier
+  storeName         String
+  storeLogoUrl      String?
+  headline          String
+  subtext           String
+  confirmButtonText String    @default("✅ Confirm My Order")
+  cancelButtonText  String    @default("❌ Cancel Order")
+  themeColor        String    @default("#000000")
+  orderDetails      String // JSON string — line items
+  orderTotal        Float
+  currency          String    @default("EGP")
+  customerName      String?
+  isConfirmed       Boolean?
+  isCancelled       Boolean?
+  confirmedAt       DateTime?
+  cancelledAt       DateTime?
+  expiresAt         DateTime
+  visitCount        Int       @default(0)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // — Relations —
+  shop       Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subscriber Subscriber @relation(fields: [subscriberId], references: [id])
+
+  @@index([shopId, isConfirmed])
+  @@index([shopId, isCancelled])
+  @@index([expiresAt])
+  @@index([orderId])
+}
+
+// ============================================================================
+// 13. AutomationRule — Automation rules for SMS flows
+// ============================================================================
+
+model AutomationRule {
+  id                String    @id @default(cuid())
+  shopId            String
+  name              String
+  description       String?
+  triggerType       String // "CART_ABANDONED" | "ORDER_CREATED" | "CHECKOUT_STARTED" | "RFM_SEGMENT_CHANGE" | "SCHEDULE"
+  triggerConditions String // JSON string — conditions for triggering
+  actions           String // JSON array of actions to execute
+  isActive          Boolean   @default(true)
+  executionCount    Int       @default(0)
+  lastExecutedAt    DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // — Relations —
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, isActive])
+  @@index([shopId, triggerType])
+  @@index([isActive, triggerType])
+}
+
+// ============================================================================
+// 14. SMSSendLog — Comprehensive SMS send log for analytics & auditing
+// ============================================================================
+
+model SMSSendLog {
+  id                 String    @id @default(cuid())
+  shopId             String
+  campaignId         String?
+  subscriberId       String?
+  gatewayType        String
+  recipientPhoneHash String // SHA-256 hash — never store raw phone in logs
+  messageContent     String
+  externalMessageId  String?
+  status             String    @default("pending") // "pending" | "queued" | "sent" | "delivered" | "failed" | "bounced" | "rejected"
+  cost               Float     @default(0)
+  currency           String    @default("EGP")
+  responseCode       String?
+  responseMessage    String?
+  latencyMs          Int?
+  retryCount         Int       @default(0)
+  sentAt             DateTime?
+  deliveredAt        DateTime?
+  failedAt           DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  // — Relations —
+  shop       Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  campaign   Campaign?   @relation(fields: [campaignId], references: [id])
+  subscriber Subscriber? @relation(fields: [subscriberId], references: [id])
+
+  @@index([shopId, createdAt])
+  @@index([shopId, status])
+  @@index([campaignId])
+  @@index([externalMessageId])
+  @@index([gatewayType, status])
+  @@index([recipientPhoneHash])
+  @@index([createdAt])
+}
