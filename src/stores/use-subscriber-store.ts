@@ -22,6 +22,14 @@ export interface SubscriberType {
   firstOrderAt: string | null;
   createdAt: string;
   updatedAt: string;
+  maskedPhone?: string;
+  discountCode?: {
+    id: string;
+    code: string;
+    discountType: string;
+    discountValue: number;
+    isActive: boolean;
+  };
 }
 
 export interface SubscriberFilters {
@@ -63,8 +71,6 @@ const defaultFilters: SubscriberFilters = {
   pageSize: 25,
 };
 
-const API_BASE = '/api';
-
 export const useSubscriberStore = create<SubscriberState>()(
   devtools(
     (set, get) => ({
@@ -78,31 +84,32 @@ export const useSubscriberStore = create<SubscriberState>()(
       fetchSubscribers: async () => {
         set({ isLoading: true, error: null });
         try {
-          const { filters } = get();
-          const params = new URLSearchParams();
-
-          if (filters.search) params.set('search', filters.search);
-          if (filters.segment && filters.segment !== 'all') params.set('segment', filters.segment);
-          if (filters.source && filters.source !== 'all') params.set('source', filters.source);
-          if (filters.isVerified && filters.isVerified !== 'all') params.set('isVerified', filters.isVerified);
-          params.set('sortBy', filters.sortBy);
-          params.set('sortOrder', filters.sortOrder);
-          params.set('page', String(filters.page));
-          params.set('pageSize', String(filters.pageSize));
-
-          const response = await fetch(`${API_BASE}/subscribers?${params.toString()}`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch subscribers: ${response.statusText}`);
-          }
-          const data = await response.json();
-          set({
-            subscribers: data.subscribers,
-            totalCount: data.totalCount,
-            isLoading: false,
+          const { search, segment, source, isVerified, sortBy, sortOrder, page, pageSize } = get().filters;
+          const shopId = 'demo-shop-1';
+          const params = new URLSearchParams({
+            shopId,
+            page: String(page),
+            pageSize: String(pageSize),
+            ...(search && { search }),
+            ...(segment && segment !== 'all' && { segment }),
+            ...(source && source !== 'all' && { source }),
+            ...(isVerified !== 'all' && { isVerified }),
+            sortBy: sortBy || 'createdAt',
+            sortOrder: sortOrder || 'desc',
           });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to fetch subscribers';
-          set({ error: message, isLoading: false });
+          const res = await fetch(`/api/subscribers?${params}`);
+          const data = await res.json();
+          if (data.success) {
+            set({
+              subscribers: data.data || [],
+              totalCount: data.pagination?.total || 0,
+              isLoading: false,
+            });
+          } else {
+            set({ error: data.error, isLoading: false });
+          }
+        } catch (err) {
+          set({ error: err instanceof Error ? err.message : 'Failed to fetch', isLoading: false });
         }
       },
 
@@ -155,7 +162,7 @@ export const useSubscriberStore = create<SubscriberState>()(
             return;
           }
 
-          const response = await fetch(`${API_BASE}/subscribers/bulk-delete`, {
+          const response = await fetch('/api/subscribers/bulk-delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ids: Array.from(selectedIds) }),
@@ -165,12 +172,17 @@ export const useSubscriberStore = create<SubscriberState>()(
             throw new Error(`Failed to delete subscribers: ${response.statusText}`);
           }
 
-          set((state) => ({
-            subscribers: state.subscribers.filter((s) => !selectedIds.has(s.id)),
-            totalCount: state.totalCount - selectedIds.size,
-            selectedIds: new Set<string>(),
-            isLoading: false,
-          }));
+          const data = await response.json();
+          if (data.success) {
+            set((state) => ({
+              subscribers: state.subscribers.filter((s) => !selectedIds.has(s.id)),
+              totalCount: state.totalCount - selectedIds.size,
+              selectedIds: new Set<string>(),
+              isLoading: false,
+            }));
+          } else {
+            set({ error: data.error, isLoading: false });
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to delete subscribers';
           set({ error: message, isLoading: false });

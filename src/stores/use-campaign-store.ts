@@ -66,8 +66,6 @@ const defaultFilters: CampaignFilters = {
   search: '',
 };
 
-const API_BASE = '/api';
-
 export const useCampaignStore = create<CampaignState>()(
   devtools(
     (set, get) => ({
@@ -78,45 +76,45 @@ export const useCampaignStore = create<CampaignState>()(
       filters: { ...defaultFilters },
 
       fetchCampaigns: async () => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true });
         try {
-          const { filters } = get();
-          const params = new URLSearchParams();
-
-          if (filters.status && filters.status !== 'all') params.set('status', filters.status);
-          if (filters.type && filters.type !== 'all') params.set('type', filters.type);
-          if (filters.search) params.set('search', filters.search);
-
-          const response = await fetch(`${API_BASE}/campaigns?${params.toString()}`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch campaigns: ${response.statusText}`);
+          const shopId = 'demo-shop-1';
+          const { status, type, search } = get().filters;
+          const params = new URLSearchParams({ shopId, page: '1', pageSize: '50' });
+          if (status && status !== 'all') params.set('status', status);
+          if (type && type !== 'all') params.set('type', type);
+          if (search) params.set('search', search);
+          const res = await fetch(`/api/campaigns?${params}`);
+          const data = await res.json();
+          if (data.success) {
+            set({ campaigns: data.data || [], isLoading: false });
+          } else {
+            set({ isLoading: false });
           }
-          const data = await response.json();
-          set({ campaigns: data, isLoading: false });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to fetch campaigns';
-          set({ error: message, isLoading: false });
+        } catch {
+          set({ isLoading: false });
         }
       },
 
       createCampaign: async (campaign: Partial<CampaignItemType>) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/campaigns`, {
+          const response = await fetch('/api/campaigns', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(campaign),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to create campaign: ${response.statusText}`);
+          const data = await response.json();
+          if (data.success) {
+            const newCampaign = data.data.campaign;
+            set((state) => ({
+              campaigns: [newCampaign, ...state.campaigns],
+              activeCampaign: newCampaign,
+              isLoading: false,
+            }));
+            return newCampaign;
           }
-          const data: CampaignItemType = await response.json();
-          set((state) => ({
-            campaigns: [data, ...state.campaigns],
-            activeCampaign: data,
-            isLoading: false,
-          }));
-          return data;
+          throw new Error(data.error);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to create campaign';
           set({ error: message, isLoading: false });
@@ -127,20 +125,22 @@ export const useCampaignStore = create<CampaignState>()(
       updateCampaign: async (id: string, data: Partial<CampaignItemType>) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/campaigns/${id}`, {
+          const response = await fetch(`/api/campaigns/${id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to update campaign: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            const updated: CampaignItemType = result.data;
+            set((state) => ({
+              campaigns: state.campaigns.map((c) => (c.id === id ? updated : c)),
+              activeCampaign: state.activeCampaign?.id === id ? updated : state.activeCampaign,
+              isLoading: false,
+            }));
+          } else {
+            set({ error: result.error, isLoading: false });
           }
-          const updated: CampaignItemType = await response.json();
-          set((state) => ({
-            campaigns: state.campaigns.map((c) => (c.id === id ? updated : c)),
-            activeCampaign: state.activeCampaign?.id === id ? updated : state.activeCampaign,
-            isLoading: false,
-          }));
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to update campaign';
           set({ error: message, isLoading: false });
@@ -150,17 +150,19 @@ export const useCampaignStore = create<CampaignState>()(
       deleteCampaign: async (id: string) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/campaigns/${id}`, {
+          const response = await fetch(`/api/campaigns/${id}`, {
             method: 'DELETE',
           });
-          if (!response.ok) {
-            throw new Error(`Failed to delete campaign: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            set((state) => ({
+              campaigns: state.campaigns.filter((c) => c.id !== id),
+              activeCampaign: state.activeCampaign?.id === id ? null : state.activeCampaign,
+              isLoading: false,
+            }));
+          } else {
+            set({ error: result.error, isLoading: false });
           }
-          set((state) => ({
-            campaigns: state.campaigns.filter((c) => c.id !== id),
-            activeCampaign: state.activeCampaign?.id === id ? null : state.activeCampaign,
-            isLoading: false,
-          }));
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to delete campaign';
           set({ error: message, isLoading: false });

@@ -36,11 +36,9 @@ interface ShopState {
   error: string | null;
   fetchShop: () => Promise<void>;
   fetchSettings: () => Promise<void>;
-  updateSettings: (settings: Partial<ShopSettings>) => Promise<void>;
+  updateSettings: (settings: Partial<ShopSettings>) => Promise<ShopSettings>;
   setShop: (shop: Shop) => void;
 }
-
-const API_BASE = '/api';
 
 export const useShopStore = create<ShopState>()(
   devtools(
@@ -53,49 +51,45 @@ export const useShopStore = create<ShopState>()(
       fetchShop: async () => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/shop`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch shop: ${response.statusText}`);
+          const res = await fetch(`/api/shop?shopDomain=${get().currentShop?.shopifyDomain || 'sms-shield-demo.myshopify.com'}`);
+          const data = await res.json();
+          if (data.success) {
+            set({ currentShop: data.data, isLoading: false });
+          } else {
+            set({ error: data.error, isLoading: false });
           }
-          const data = await response.json();
-          set({ currentShop: data, isLoading: false });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to fetch shop data';
-          set({ error: message, isLoading: false });
+        } catch (err) {
+          set({ error: err instanceof Error ? err.message : 'Failed to fetch shop', isLoading: false });
         }
       },
 
       fetchSettings: async () => {
-        set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/shop/settings`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch settings: ${response.statusText}`);
-          }
-          const data = await response.json();
-          set({ settings: data, isLoading: false });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to fetch shop settings';
-          set({ error: message, isLoading: false });
+          const shopId = get().currentShop?.id || 'demo-shop-1';
+          const res = await fetch(`/api/settings?shopId=${shopId}`);
+          const data = await res.json();
+          if (data.success) set({ settings: data.data });
+        } catch (err) {
+          console.error('Failed to fetch settings:', err);
         }
       },
 
-      updateSettings: async (settings: Partial<ShopSettings>) => {
-        set({ isLoading: true, error: null });
+      updateSettings: async (newSettings: Partial<ShopSettings>): Promise<ShopSettings> => {
         try {
-          const response = await fetch(`${API_BASE}/shop/settings`, {
-            method: 'PATCH',
+          const shopId = get().currentShop?.id || 'demo-shop-1';
+          const res = await fetch('/api/settings', {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(settings),
+            body: JSON.stringify({ shopId, ...newSettings }),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to update settings: ${response.statusText}`);
+          const data = await res.json();
+          if (data.success) {
+            set({ settings: data.data });
+            return data.data;
           }
-          const data = await response.json();
-          set({ settings: data, isLoading: false });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to update shop settings';
-          set({ error: message, isLoading: false });
+          throw new Error(data.error);
+        } catch (err) {
+          throw err;
         }
       },
 

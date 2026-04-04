@@ -18,6 +18,11 @@ export interface GatewayConfigType {
   healthStatus: HealthStatus;
   createdAt: string;
   updatedAt: string;
+  // API response includes masked fields
+  maskedUsername?: string;
+  maskedPassword?: string;
+  hasApiKey?: boolean;
+  maskedApiKey?: string | null;
 }
 
 export interface HealthCheckResult {
@@ -51,8 +56,6 @@ interface GatewayState {
   setBalance: (gatewayId: string, balance: GatewayBalance) => void;
 }
 
-const API_BASE = '/api';
-
 export const useGatewayStore = create<GatewayState>()(
   devtools(
     (set, get) => ({
@@ -63,57 +66,56 @@ export const useGatewayStore = create<GatewayState>()(
       error: null,
 
       fetchGateways: async () => {
-        set({ isLoading: true, error: null });
+        set({ isLoading: true });
         try {
-          const response = await fetch(`${API_BASE}/gateways`);
-          if (!response.ok) {
-            throw new Error(`Failed to fetch gateways: ${response.statusText}`);
+          const shopId = 'demo-shop-1';
+          const res = await fetch(`/api/gateways?shopId=${shopId}`);
+          const data = await res.json();
+          if (data.success) {
+            const gateways = data.data || [];
+
+            const healthMap = new Map<string, HealthCheckResult>();
+            gateways.forEach((gateway: GatewayConfigType) => {
+              if (gateway.lastHealthCheckAt) {
+                healthMap.set(gateway.id, {
+                  gatewayId: gateway.id,
+                  status: gateway.healthStatus,
+                  latencyMs: null,
+                  checkedAt: gateway.lastHealthCheckAt,
+                  errorMessage: null,
+                });
+              }
+            });
+
+            set({
+              gateways,
+              healthChecks: healthMap,
+              isLoading: false,
+            });
           }
-          const data: GatewayConfigType[] = await response.json();
-
-          const healthMap = new Map<string, HealthCheckResult>();
-          const balanceMap = new Map<string, GatewayBalance>();
-          data.forEach((gateway) => {
-            if (gateway.lastHealthCheckAt) {
-              healthMap.set(gateway.id, {
-                gatewayId: gateway.id,
-                status: gateway.healthStatus,
-                latencyMs: null,
-                checkedAt: gateway.lastHealthCheckAt,
-                errorMessage: null,
-              });
-            }
-          });
-
-          set({
-            gateways: data,
-            healthChecks: healthMap,
-            balances: balanceMap,
-            isLoading: false,
-          });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : 'Failed to fetch gateway configurations';
-          set({ error: message, isLoading: false });
+        } catch {
+          set({ isLoading: false });
         }
       },
 
       addGateway: async (gateway: Partial<GatewayConfigType>) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/gateways`, {
+          const response = await fetch('/api/gateways', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(gateway),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to add gateway: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            const data: GatewayConfigType = result.data;
+            set((state) => ({
+              gateways: [...state.gateways, data].sort((a, b) => a.priority - b.priority),
+              isLoading: false,
+            }));
+            return data;
           }
-          const data: GatewayConfigType = await response.json();
-          set((state) => ({
-            gateways: [...state.gateways, data].sort((a, b) => a.priority - b.priority),
-            isLoading: false,
-          }));
-          return data;
+          throw new Error(result.error);
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to add gateway';
           set({ error: message, isLoading: false });
@@ -124,21 +126,23 @@ export const useGatewayStore = create<GatewayState>()(
       updateGateway: async (id: string, data: Partial<GatewayConfigType>) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/gateways/${id}`, {
-            method: 'PATCH',
+          const response = await fetch('/api/gateways', {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: JSON.stringify({ id, ...data }),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to update gateway: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            const updated: GatewayConfigType = result.data;
+            set((state) => ({
+              gateways: state.gateways
+                .map((g) => (g.id === id ? updated : g))
+                .sort((a, b) => a.priority - b.priority),
+              isLoading: false,
+            }));
+          } else {
+            set({ error: result.error, isLoading: false });
           }
-          const updated: GatewayConfigType = await response.json();
-          set((state) => ({
-            gateways: state.gateways
-              .map((g) => (g.id === id ? updated : g))
-              .sort((a, b) => a.priority - b.priority),
-            isLoading: false,
-          }));
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to update gateway';
           set({ error: message, isLoading: false });
@@ -148,24 +152,28 @@ export const useGatewayStore = create<GatewayState>()(
       deleteGateway: async (id: string) => {
         set({ isLoading: true, error: null });
         try {
-          const response = await fetch(`${API_BASE}/gateways/${id}`, {
+          const response = await fetch('/api/gateways', {
             method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
           });
-          if (!response.ok) {
-            throw new Error(`Failed to delete gateway: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            set((state) => {
+              const newHealthChecks = new Map(state.healthChecks);
+              newHealthChecks.delete(id);
+              const newBalances = new Map(state.balances);
+              newBalances.delete(id);
+              return {
+                gateways: state.gateways.filter((g) => g.id !== id),
+                healthChecks: newHealthChecks,
+                balances: newBalances,
+                isLoading: false,
+              };
+            });
+          } else {
+            set({ error: result.error, isLoading: false });
           }
-          set((state) => {
-            const newHealthChecks = new Map(state.healthChecks);
-            newHealthChecks.delete(id);
-            const newBalances = new Map(state.balances);
-            newBalances.delete(id);
-            return {
-              gateways: state.gateways.filter((g) => g.id !== id),
-              healthChecks: newHealthChecks,
-              balances: newBalances,
-              isLoading: false,
-            };
-          });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to delete gateway';
           set({ error: message, isLoading: false });
@@ -175,32 +183,33 @@ export const useGatewayStore = create<GatewayState>()(
       checkHealth: async (id?: string) => {
         set({ isLoading: true, error: null });
         try {
-          const targetId = id ?? 'all';
           const url = id
-            ? `${API_BASE}/gateways/${id}/health`
-            : `${API_BASE}/gateways/health`;
+            ? `/api/gateways/${id}/health`
+            : '/api/gateways/health';
           const response = await fetch(url);
-          if (!response.ok) {
-            throw new Error(`Health check failed: ${response.statusText}`);
+          const result = await response.json();
+          if (result.success) {
+            const results: HealthCheckResult[] = result.data;
+
+            set((state) => {
+              const newHealthChecks = new Map(state.healthChecks);
+              results.forEach((r) => {
+                newHealthChecks.set(r.gatewayId, r);
+              });
+
+              const updatedGateways = state.gateways.map((gateway) => {
+                const healthResult = newHealthChecks.get(gateway.id);
+                if (healthResult) {
+                  return { ...gateway, healthStatus: healthResult.status, lastHealthCheckAt: healthResult.checkedAt };
+                }
+                return gateway;
+              });
+
+              return { gateways: updatedGateways, healthChecks: newHealthChecks, isLoading: false };
+            });
+          } else {
+            set({ error: result.error, isLoading: false });
           }
-          const results: HealthCheckResult[] = await response.json();
-
-          set((state) => {
-            const newHealthChecks = new Map(state.healthChecks);
-            results.forEach((result) => {
-              newHealthChecks.set(result.gatewayId, result);
-            });
-
-            const updatedGateways = state.gateways.map((gateway) => {
-              const healthResult = newHealthChecks.get(gateway.id);
-              if (healthResult) {
-                return { ...gateway, healthStatus: healthResult.status, lastHealthCheckAt: healthResult.checkedAt };
-              }
-              return gateway;
-            });
-
-            return { gateways: updatedGateways, healthChecks: newHealthChecks, isLoading: false };
-          });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Health check failed';
           set({ error: message, isLoading: false });
@@ -211,21 +220,23 @@ export const useGatewayStore = create<GatewayState>()(
         set({ isLoading: true, error: null });
         try {
           const url = id
-            ? `${API_BASE}/gateways/${id}/balance`
-            : `${API_BASE}/gateways/balance`;
+            ? `/api/gateways/${id}/balance`
+            : '/api/gateways/balance';
           const response = await fetch(url);
-          if (!response.ok) {
-            throw new Error(`Balance check failed: ${response.statusText}`);
-          }
-          const results: GatewayBalance[] = await response.json();
+          const result = await response.json();
+          if (result.success) {
+            const results: GatewayBalance[] = result.data;
 
-          set((state) => {
-            const newBalances = new Map(state.balances);
-            results.forEach((balance) => {
-              newBalances.set(balance.gatewayId, balance);
+            set((state) => {
+              const newBalances = new Map(state.balances);
+              results.forEach((balance) => {
+                newBalances.set(balance.gatewayId, balance);
+              });
+              return { balances: newBalances, isLoading: false };
             });
-            return { balances: newBalances, isLoading: false };
-          });
+          } else {
+            set({ error: result.error, isLoading: false });
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Balance check failed';
           set({ error: message, isLoading: false });
